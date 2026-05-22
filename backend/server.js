@@ -7,7 +7,19 @@ require("dotenv").config();
 const db = require("./db");
 
 const app = express();
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "temporary-admin-key";
 
+function requireAdminKey(req, res, next) {
+  const key = req.headers["x-admin-api-key"];
+
+  if (!key || key !== ADMIN_API_KEY) {
+    return res.status(401).json({
+      error: "Unauthorized request",
+    });
+  }
+
+  next();
+}
 app.use(cors({ origin: "*", methods: ["GET", "POST", "PUT", "DELETE"] }));
 app.use(express.json());
 
@@ -306,7 +318,7 @@ app.get("/api/data/:collection", async (req, res) => {
 });
 
 // Add document to a collection
-app.post("/api/data/:collection", async (req, res) => {
+app.post("/api/data/:collection", requireAdminKey, async (req, res) => {
   try {
     const collectionName = req.params.collection;
 
@@ -340,7 +352,8 @@ app.post("/api/data/:collection", async (req, res) => {
   }
 });
 // Replace all documents in a collection
-app.post("/api/data/:collection/replace", async (req, res) => {
+app.post("/api/data/:collection/replace", requireAdminKey, async (req, res) => {
+
   try {
     const collectionName = req.params.collection;
 
@@ -390,7 +403,7 @@ app.post("/api/data/:collection/replace", async (req, res) => {
   }
 });
 // Update document in a collection
-app.put("/api/data/:collection/:id", async (req, res) => {
+app.put("/api/data/:collection/:id", requireAdminKey, async (req, res) => {
   try {
     const collectionName = req.params.collection;
     const id = req.params.id;
@@ -434,7 +447,7 @@ app.put("/api/data/:collection/:id", async (req, res) => {
 });
 
 // Delete document from a collection
-app.delete("/api/data/:collection/:id", async (req, res) => {
+app.delete("/api/data/:collection/:id", requireAdminKey, async (req, res) => {
   try {
     const collectionName = req.params.collection;
     const id = req.params.id;

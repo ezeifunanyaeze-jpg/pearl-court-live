@@ -147,13 +147,14 @@ const loadCollection = async (name, fallback) => {
       return data;
     }
 
-    await fetch(`${API_BASE}/data/${name}/replace`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(fallback),
-    });
+await fetch(`${API_BASE}/data/${name}/replace`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-admin-api-key": ADMIN_API_KEY,
+  },
+  body: JSON.stringify(fallback),
+});    
 
     return fallback;
   } catch (error) {
@@ -162,12 +163,15 @@ const loadCollection = async (name, fallback) => {
   }
 };
 
+const ADMIN_API_KEY = "PCE-ADMIN-2026-LIVE";
+
 const saveCollection = async (name, data) => {
   try {
     await fetch(`${API_BASE}/data/${name}/replace`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "x-admin-api-key": ADMIN_API_KEY,
       },
       body: JSON.stringify(data),
     });
