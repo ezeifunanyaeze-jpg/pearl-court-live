@@ -1,6 +1,6 @@
 import axios from "axios";
 
 export const API = axios.create({
-  baseURL: "http://localhost:5000/api",
+  baseURL: "https://pearl-court-backend.onrender.com/api",
   timeout: 60000,
 });
