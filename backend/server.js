@@ -252,7 +252,223 @@ app.post("/api/payments", async (req, res) => {
 });
 
 // =====================================
+// =====================================
+// GENERIC FIRESTORE PERSISTENCE API
+// =====================================
 
+const allowedCollections = [
+  "users",
+  "residents",
+  "vehicles",
+  "accessCodes",
+  "gateLogs",
+  "dues",
+  "transactions",
+  "activities",
+  "maintenanceHistory",
+  "dieselLog",
+  "meetings",
+  "activityLog",
+  "emails",
+];
+
+// Get all documents in a collection
+app.get("/api/data/:collection", async (req, res) => {
+  try {
+    const collectionName = req.params.collection;
+
+    if (!allowedCollections.includes(collectionName)) {
+      return res.status(400).json({
+        error: "Collection not allowed",
+      });
+    }
+
+    const snapshot = await db.collection(collectionName).get();
+
+    const records = [];
+
+    snapshot.forEach((doc) => {
+      records.push({
+        id: doc.id,
+        ...doc.data(),
+      });
+    });
+
+    res.json(records);
+  } catch (error) {
+    console.error("Fetch collection error:", error);
+
+    res.status(500).json({
+      error: "Failed to fetch collection",
+      details: error.message,
+    });
+  }
+});
+
+// Add document to a collection
+app.post("/api/data/:collection", async (req, res) => {
+  try {
+    const collectionName = req.params.collection;
+
+    if (!allowedCollections.includes(collectionName)) {
+      return res.status(400).json({
+        error: "Collection not allowed",
+      });
+    }
+
+    const payload = {
+      ...req.body,
+      createdAt: req.body.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const docRef = await db.collection(collectionName).add(payload);
+
+    const savedRecord = {
+      id: docRef.id,
+      ...payload,
+    };
+
+    res.status(201).json(savedRecord);
+  } catch (error) {
+    console.error("Add collection record error:", error);
+
+    res.status(500).json({
+      error: "Failed to add record",
+      details: error.message,
+    });
+  }
+});
+// Replace all documents in a collection
+app.post("/api/data/:collection/replace", async (req, res) => {
+  try {
+    const collectionName = req.params.collection;
+
+    if (!allowedCollections.includes(collectionName)) {
+      return res.status(400).json({
+        error: "Collection not allowed",
+      });
+    }
+
+    if (!Array.isArray(req.body)) {
+      return res.status(400).json({
+        error: "Request body must be an array",
+      });
+    }
+
+    const collectionRef = db.collection(collectionName);
+    const snapshot = await collectionRef.get();
+
+    const batch = db.batch();
+
+    snapshot.forEach((doc) => {
+      batch.delete(doc.ref);
+    });
+
+    req.body.forEach((item) => {
+      const newDocRef = collectionRef.doc();
+      batch.set(newDocRef, {
+        ...item,
+        updatedAt: new Date().toISOString(),
+      });
+    });
+
+    await batch.commit();
+
+    res.json({
+      message: "Collection replaced successfully",
+      collection: collectionName,
+      count: req.body.length,
+    });
+  } catch (error) {
+    console.error("Replace collection error:", error);
+
+    res.status(500).json({
+      error: "Failed to replace collection",
+      details: error.message,
+    });
+  }
+});
+// Update document in a collection
+app.put("/api/data/:collection/:id", async (req, res) => {
+  try {
+    const collectionName = req.params.collection;
+    const id = req.params.id;
+
+    if (!allowedCollections.includes(collectionName)) {
+      return res.status(400).json({
+        error: "Collection not allowed",
+      });
+    }
+
+    const docRef = db.collection(collectionName).doc(id);
+    const docSnapshot = await docRef.get();
+
+    if (!docSnapshot.exists) {
+      return res.status(404).json({
+        error: "Record not found",
+      });
+    }
+
+    const updatePayload = {
+      ...req.body,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await docRef.update(updatePayload);
+
+    const updatedDoc = await docRef.get();
+
+    res.json({
+      id: updatedDoc.id,
+      ...updatedDoc.data(),
+    });
+  } catch (error) {
+    console.error("Update collection record error:", error);
+
+    res.status(500).json({
+      error: "Failed to update record",
+      details: error.message,
+    });
+  }
+});
+
+// Delete document from a collection
+app.delete("/api/data/:collection/:id", async (req, res) => {
+  try {
+    const collectionName = req.params.collection;
+    const id = req.params.id;
+
+    if (!allowedCollections.includes(collectionName)) {
+      return res.status(400).json({
+        error: "Collection not allowed",
+      });
+    }
+
+    const docRef = db.collection(collectionName).doc(id);
+    const docSnapshot = await docRef.get();
+
+    if (!docSnapshot.exists) {
+      return res.status(404).json({
+        error: "Record not found",
+      });
+    }
+
+    await docRef.delete();
+
+    res.json({
+      message: "Record deleted successfully",
+      id,
+    });
+  } catch (error) {
+    console.error("Delete collection record error:", error);
+
+    res.status(500).json({
+      error: "Failed to delete record",
+      details: error.message,
+    });
+  }
+});
 app.use((req, res) => {
   res.status(404).json({ error: "Route not found" });
 });
