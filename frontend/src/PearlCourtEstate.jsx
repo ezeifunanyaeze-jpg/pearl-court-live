@@ -133,7 +133,189 @@ export default function PearlCourtEstate() {
   const [modal, setModal] = useState(null);
   const emailsRef = useRef(emails);
   emailsRef.current = emails;
+const API_BASE = "https://pearl-court-backend.onrender.com/api";
 
+const [cloudReady, setCloudReady] = useState(false);
+const [cloudStatus, setCloudStatus] = useState("Connecting to cloud...");
+
+const loadCollection = async (name, fallback) => {
+  try {
+    const response = await fetch(`${API_BASE}/data/${name}`);
+    const data = await response.json();
+
+    if (Array.isArray(data) && data.length > 0) {
+      return data;
+    }
+
+    await fetch(`${API_BASE}/data/${name}/replace`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(fallback),
+    });
+
+    return fallback;
+  } catch (error) {
+    console.error(`Failed to load ${name}:`, error);
+    return fallback;
+  }
+};
+
+const saveCollection = async (name, data) => {
+  try {
+    await fetch(`${API_BASE}/data/${name}/replace`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
+  } catch (error) {
+    console.error(`Failed to save ${name}:`, error);
+  }
+};
+
+useEffect(() => {
+  const hydrateFromCloud = async () => {
+    try {
+      setCloudStatus("Loading cloud data...");
+
+      const [
+        cloudUsers,
+        cloudResidents,
+        cloudVehicles,
+        cloudAccessCodes,
+        cloudGateLog,
+        cloudDues,
+        cloudTransactions,
+        cloudActivities,
+        cloudMaintenanceHistory,
+        cloudDieselLog,
+        cloudMeetings,
+        cloudActivityLog,
+        cloudEmails,
+      ] = await Promise.all([
+        loadCollection("users", seedUsers),
+        loadCollection("residents", seedResidents),
+        loadCollection("vehicles", seedVehicles),
+        loadCollection("accessCodes", []),
+        loadCollection("gateLogs", []),
+        loadCollection("dues", []),
+        loadCollection("transactions", []),
+        loadCollection("activities", seedActivities),
+        loadCollection("maintenanceHistory", []),
+        loadCollection("dieselLog", []),
+        loadCollection("meetings", []),
+        loadCollection("activityLog", []),
+        loadCollection("emails", []),
+      ]);
+
+      setUsers(cloudUsers);
+      setResidents(cloudResidents);
+      setVehicles(cloudVehicles);
+      setAccessCodes(cloudAccessCodes);
+      setGateLog(cloudGateLog);
+      setDues(cloudDues);
+      setTransactions(cloudTransactions);
+      setActivities(cloudActivities);
+      setMaintenanceHistory(cloudMaintenanceHistory);
+      setDieselLog(cloudDieselLog);
+      setMeetings(cloudMeetings);
+      setActivityLog(cloudActivityLog);
+      setEmails(cloudEmails);
+
+      setCloudReady(true);
+      setCloudStatus("Cloud sync active");
+    } catch (error) {
+      console.error("Cloud hydration failed:", error);
+      setCloudStatus("Cloud sync failed; using local state");
+      setCloudReady(true);
+    }
+  };
+
+  hydrateFromCloud();
+}, []);
+useEffect(() => {
+  if (!cloudReady) return;
+  const t = setTimeout(() => saveCollection("users", users), 1200);
+  return () => clearTimeout(t);
+}, [users, cloudReady]);
+
+useEffect(() => {
+  if (!cloudReady) return;
+  const t = setTimeout(() => saveCollection("residents", residents), 1200);
+  return () => clearTimeout(t);
+}, [residents, cloudReady]);
+
+useEffect(() => {
+  if (!cloudReady) return;
+  const t = setTimeout(() => saveCollection("vehicles", vehicles), 1200);
+  return () => clearTimeout(t);
+}, [vehicles, cloudReady]);
+
+useEffect(() => {
+  if (!cloudReady) return;
+  const t = setTimeout(() => saveCollection("accessCodes", accessCodes), 1200);
+  return () => clearTimeout(t);
+}, [accessCodes, cloudReady]);
+
+useEffect(() => {
+  if (!cloudReady) return;
+  const t = setTimeout(() => saveCollection("gateLogs", gateLog), 1200);
+  return () => clearTimeout(t);
+}, [gateLog, cloudReady]);
+
+useEffect(() => {
+  if (!cloudReady) return;
+  const t = setTimeout(() => saveCollection("dues", dues), 1200);
+  return () => clearTimeout(t);
+}, [dues, cloudReady]);
+
+useEffect(() => {
+  if (!cloudReady) return;
+  const t = setTimeout(() => saveCollection("transactions", transactions), 1200);
+  return () => clearTimeout(t);
+}, [transactions, cloudReady]);
+
+useEffect(() => {
+  if (!cloudReady) return;
+  const t = setTimeout(() => saveCollection("activities", activities), 1200);
+  return () => clearTimeout(t);
+}, [activities, cloudReady]);
+
+useEffect(() => {
+  if (!cloudReady) return;
+  const t = setTimeout(
+    () => saveCollection("maintenanceHistory", maintenanceHistory),
+    1200
+  );
+  return () => clearTimeout(t);
+}, [maintenanceHistory, cloudReady]);
+
+useEffect(() => {
+  if (!cloudReady) return;
+  const t = setTimeout(() => saveCollection("dieselLog", dieselLog), 1200);
+  return () => clearTimeout(t);
+}, [dieselLog, cloudReady]);
+
+useEffect(() => {
+  if (!cloudReady) return;
+  const t = setTimeout(() => saveCollection("meetings", meetings), 1200);
+  return () => clearTimeout(t);
+}, [meetings, cloudReady]);
+
+useEffect(() => {
+  if (!cloudReady) return;
+  const t = setTimeout(() => saveCollection("activityLog", activityLog), 1200);
+  return () => clearTimeout(t);
+}, [activityLog, cloudReady]);
+
+useEffect(() => {
+  if (!cloudReady) return;
+  const t = setTimeout(() => saveCollection("emails", emails), 1200);
+  return () => clearTimeout(t);
+}, [emails, cloudReady]);
   useEffect(() => { const t = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(t); }, []);
 
   // Auto-send maintenance alerts on load
@@ -229,6 +411,9 @@ export default function PearlCourtEstate() {
             <div style={{ fontFamily: "Playfair Display", fontWeight: 900, fontSize: 15, color: "#1a1a2e" }}>PEARL COURT</div>
             <div style={{ fontSize: 9, color: "#9090b0", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>Estate Management</div>
             <div style={{ fontSize: 10, color: "#b0a890", marginTop: 2 }}>12/14 Oladipo Bateye St, GRA Ikeja</div>
+            <div style={{ fontSize: 10, color: "#2e7d52", marginTop: 6, fontWeight: 700 }}>
+  {cloudStatus}
+</div>
           </div>
           <div style={{ background: ROLE_COLORS[role], borderRadius: 10, padding: "9px 12px", marginBottom: 12 }}>
             <div style={{ fontSize: 10, color: "#ffffff99", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8 }}>{ROLE_LABELS[role]}</div>
