@@ -7,6 +7,10 @@ require("dotenv").config();
 const db = require("./db");
 
 const app = express();
+
+// =========================
+// ADMIN API KEY PROTECTION
+// =========================
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "temporary-admin-key";
 
 function requireAdminKey(req, res, next) {
@@ -20,254 +24,57 @@ function requireAdminKey(req, res, next) {
 
   next();
 }
-app.use(cors({ origin: "*", methods: ["GET", "POST", "PUT", "DELETE"] }));
+
+// =========================
+// CORS (SAFE + STABLE)
+// =========================
+const allowedOrigins = [
+  "https://pearl-court-frontend.vercel.app",
+  "http://localhost:5173",
+];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "x-admin-api-key"],
+  })
+);
+
 app.use(express.json());
 
+// =========================
+// SOCKET.IO (OPTIONAL)
+// =========================
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: { origin: "*", methods: ["GET", "POST", "PUT", "DELETE"] },
+  cors: {
+    origin: allowedOrigins,
+    methods: ["GET", "POST"],
+  },
 });
 
-io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
-});
-
-// =====================================
-// ✅ OVERDUE RULE FUNCTION (15 DAYS)
-// =====================================
-
-function checkOverdue(lastPaymentDate) {
-  if (!lastPaymentDate) return true;
-
-  const last = new Date(lastPaymentDate);
-  const now = new Date();
-
-  const diffDays = (now - last) / (1000 * 60 * 60 * 24);
-
-  return diffDays > 15;
-}
-
-// =====================================
+// =========================
 // BASIC ROUTES
-// =====================================
-
+// =========================
 app.get("/", (req, res) => {
-  res.send("Pearl Court backend is running");
+  res.send("Pearl Court Backend Running");
 });
 
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
-// =====================================
-// RESIDENTS
-// =====================================
-
-app.get("/api/residents", async (req, res) => {
-  const snapshot = await db.collection("residents").get();
-
-  const residents = [];
-  snapshot.forEach((doc) => {
-    residents.push({ id: doc.id, ...doc.data() });
-  });
-
-  res.json(residents);
-});
-
-app.post("/api/residents", async (req, res) => {
-  const resident = {
-    ...req.body,
-    duesStatus: "clear",
-    accessStatus: "active",
-    createdAt: new Date().toISOString(),
-  };
-
-  const docRef = await db.collection("residents").add(resident);
-
-  res.json({ id: docRef.id, ...resident });
-});
-
-// =====================================
-// ACCESS CODES
-// =====================================
-// ✅ GET all access codes (FIX MISSING ROUTE)
-
-app.get("/api/access-codes", async (req, res) => {
-  try {
-    const snapshot = await db.collection("accessCodes").get();
-
-    const accessCodes = [];
-
-    snapshot.forEach((doc) => {
-      accessCodes.push({
-        id: doc.id,
-        ...doc.data(),
-      });
-    });
-
-    res.json(accessCodes);
-  } catch (error) {
-    res.status(500).json({
-      error: "Failed to fetch access codes",
-      details: error.message,
-    });
-  }
-});
-
-app.post("/api/access-codes", async (req, res) => {
-  try {
-    const { apt, visitorName, residentName } = req.body;
-
-    if (!apt || !visitorName) {
-      return res.status(400).json({
-        error: "Apartment and visitor name are required",
-      });
-    }
-
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + 15 * 60000);
-
-    const accessCode = {
-      code,
-      apt,
-      visitorName,
-      residentName: residentName || "",
-      used: false,
-      createdAt: now.toISOString(),
-      expiresAt: expiresAt.toISOString(),
-    };
-
-    const docRef = await db.collection("accessCodes").add(accessCode);
-
-    res.json({ id: docRef.id, ...accessCode });
-  } catch (error) {
-    console.error("Access code error:", error);
-
-    res.status(500).json({
-      error: "Failed to create access code",
-      details: error.message,
-    });
-  }
-});
-
-// =====================================
-// VERIFY CODE + OVERDUE CHECK
-// =====================================
-
-app.post("/api/access-codes/verify", async (req, res) => {
-  const { code } = req.body;
-
-  const snapshot = await db
-    .collection("accessCodes")
-    .where("code", "==", code)
-    .limit(1)
-    .get();
-
-  if (snapshot.empty) {
-    return res.status(404).json({
-      valid: false,
-      error: "Invalid access code",
-    });
-  }
-
-  const codeDoc = snapshot.docs[0];
-  const codeData = codeDoc.data();
-
-  if (codeData.used) {
-    return res.json({ valid: false, error: "Already used" });
-  }
-
-  if (new Date() > new Date(codeData.expiresAt)) {
-    return res.json({ valid: false, error: "Expired" });
-  }
-
-  // ✅ CHECK RESIDENT STATUS
-  const residentsSnapshot = await db
-    .collection("residents")
-    .where("apt", "==", codeData.apt)
-    .limit(1)
-    .get();
-
-  if (!residentsSnapshot.empty) {
-    const residentDoc = residentsSnapshot.docs[0];
-    const resident = residentDoc.data();
-
-    const overdue = checkOverdue(resident.lastPaymentDate);
-
-    if (overdue || resident.accessStatus === "blocked") {
-      return res.status(403).json({
-        valid: false,
-        error: "Access blocked (unpaid dues)",
-      });
-    }
-  }
-
-  await db.collection("accessCodes").doc(codeDoc.id).update({
-    used: true,
-  });
-
-  const gateLog = {
-    apt: codeData.apt,
-    visitorName: codeData.visitorName,
-    action: "visitor-entry-approved",
-    time: new Date().toISOString(),
-  };
-
-  await db.collection("gateLogs").add(gateLog);
-
-  res.json({ valid: true, message: "Access Approved" });
-});
-
-// =====================================
-// GATE LOGS
-// =====================================
-
-app.get("/api/gate-logs", async (req, res) => {
-  const snapshot = await db.collection("gateLogs").get();
-
-  const logs = [];
-  snapshot.forEach((doc) => {
-    logs.push({ id: doc.id, ...doc.data() });
-  });
-
-  res.json(logs);
-});
-
-// =====================================
-// PAYMENTS
-// =====================================
-
-app.post("/api/payments", async (req, res) => {
-  const { residentId, apt, amount } = req.body;
-
-  const payment = {
-    residentId,
-    apt,
-    amount,
-    createdAt: new Date().toISOString(),
-  };
-
-  await db.collection("payments").add(payment);
-
-  if (residentId) {
-    await db.collection("residents").doc(residentId).update({
-      duesStatus: "clear",
-      accessStatus: "active",
-      lastPaymentDate: new Date().toISOString(),
-    });
-  }
-
-  res.json({ message: "Payment recorded" });
-});
-
-// =====================================
-// =====================================
-// GENERIC FIRESTORE PERSISTENCE API
-// =====================================
-
+// =========================
+// GENERIC FIRESTORE API
+// =========================
 const allowedCollections = [
   "users",
   "residents",
@@ -284,210 +91,163 @@ const allowedCollections = [
   "emails",
 ];
 
-// Get all documents in a collection
+// GET collection
 app.get("/api/data/:collection", async (req, res) => {
   try {
     const collectionName = req.params.collection;
 
     if (!allowedCollections.includes(collectionName)) {
-      return res.status(400).json({
-        error: "Collection not allowed",
-      });
+      return res.status(400).json({ error: "Invalid collection" });
     }
 
     const snapshot = await db.collection(collectionName).get();
 
-    const records = [];
+    const data = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
 
-    snapshot.forEach((doc) => {
-      records.push({
-        id: doc.id,
-        ...doc.data(),
-      });
-    });
-
-    res.json(records);
+    res.json(data);
   } catch (error) {
-    console.error("Fetch collection error:", error);
-
-    res.status(500).json({
-      error: "Failed to fetch collection",
-      details: error.message,
-    });
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch data" });
   }
 });
 
-// Add document to a collection
+// ADD new record
 app.post("/api/data/:collection", requireAdminKey, async (req, res) => {
   try {
     const collectionName = req.params.collection;
 
     if (!allowedCollections.includes(collectionName)) {
-      return res.status(400).json({
-        error: "Collection not allowed",
-      });
+      return res.status(400).json({ error: "Invalid collection" });
     }
 
     const payload = {
       ...req.body,
-      createdAt: req.body.createdAt || new Date().toISOString(),
+      createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
     const docRef = await db.collection(collectionName).add(payload);
 
-    const savedRecord = {
+    res.json({
       id: docRef.id,
       ...payload,
-    };
-
-    res.status(201).json(savedRecord);
-  } catch (error) {
-    console.error("Add collection record error:", error);
-
-    res.status(500).json({
-      error: "Failed to add record",
-      details: error.message,
     });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to add record" });
   }
 });
-// Replace all documents in a collection
-app.post("/api/data/:collection/replace", requireAdminKey, async (req, res) => {
 
-  try {
-    const collectionName = req.params.collection;
+// REPLACE collection (bulk)
+app.post(
+  "/api/data/:collection/replace",
+  requireAdminKey,
+  async (req, res) => {
+    try {
+      const collectionName = req.params.collection;
 
-    if (!allowedCollections.includes(collectionName)) {
-      return res.status(400).json({
-        error: "Collection not allowed",
+      if (!allowedCollections.includes(collectionName)) {
+        return res.status(400).json({ error: "Invalid collection" });
+      }
+
+      if (!Array.isArray(req.body)) {
+        return res.status(400).json({ error: "Body must be array" });
+      }
+
+      const collectionRef = db.collection(collectionName);
+      const snapshot = await collectionRef.get();
+
+      const batch = db.batch();
+
+      // delete old
+      snapshot.forEach(doc => {
+        batch.delete(doc.ref);
       });
-    }
 
-    if (!Array.isArray(req.body)) {
-      return res.status(400).json({
-        error: "Request body must be an array",
+      // add new
+      req.body.forEach(item => {
+        const newRef = collectionRef.doc();
+        batch.set(newRef, {
+          ...item,
+          updatedAt: new Date().toISOString(),
+        });
       });
+
+      await batch.commit();
+
+      res.json({
+        message: "Collection replaced",
+        count: req.body.length,
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Replace failed" });
     }
+  }
+);
 
-    const collectionRef = db.collection(collectionName);
-    const snapshot = await collectionRef.get();
+// UPDATE record
+app.put(
+  "/api/data/:collection/:id",
+  requireAdminKey,
+  async (req, res) => {
+    try {
+      const { collection, id } = req.params;
 
-    const batch = db.batch();
+      if (!allowedCollections.includes(collection)) {
+        return res.status(400).json({ error: "Invalid collection" });
+      }
 
-    snapshot.forEach((doc) => {
-      batch.delete(doc.ref);
-    });
+      const ref = db.collection(collection).doc(id);
 
-    req.body.forEach((item) => {
-      const newDocRef = collectionRef.doc();
-      batch.set(newDocRef, {
-        ...item,
+      await ref.update({
+        ...req.body,
         updatedAt: new Date().toISOString(),
       });
-    });
 
-    await batch.commit();
+      const updated = await ref.get();
 
-    res.json({
-      message: "Collection replaced successfully",
-      collection: collectionName,
-      count: req.body.length,
-    });
-  } catch (error) {
-    console.error("Replace collection error:", error);
-
-    res.status(500).json({
-      error: "Failed to replace collection",
-      details: error.message,
-    });
+      res.json({
+        id: updated.id,
+        ...updated.data(),
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Update failed" });
+    }
   }
-});
-// Update document in a collection
-app.put("/api/data/:collection/:id", requireAdminKey, async (req, res) => {
-  try {
-    const collectionName = req.params.collection;
-    const id = req.params.id;
+);
 
-    if (!allowedCollections.includes(collectionName)) {
-      return res.status(400).json({
-        error: "Collection not allowed",
-      });
+// DELETE record
+app.delete(
+  "/api/data/:collection/:id",
+  requireAdminKey,
+  async (req, res) => {
+    try {
+      const { collection, id } = req.params;
+
+      if (!allowedCollections.includes(collection)) {
+        return res.status(400).json({ error: "Invalid collection" });
+      }
+
+      await db.collection(collection).doc(id).delete();
+
+      res.json({ message: "Deleted", id });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Delete failed" });
     }
-
-    const docRef = db.collection(collectionName).doc(id);
-    const docSnapshot = await docRef.get();
-
-    if (!docSnapshot.exists) {
-      return res.status(404).json({
-        error: "Record not found",
-      });
-    }
-
-    const updatePayload = {
-      ...req.body,
-      updatedAt: new Date().toISOString(),
-    };
-
-    await docRef.update(updatePayload);
-
-    const updatedDoc = await docRef.get();
-
-    res.json({
-      id: updatedDoc.id,
-      ...updatedDoc.data(),
-    });
-  } catch (error) {
-    console.error("Update collection record error:", error);
-
-    res.status(500).json({
-      error: "Failed to update record",
-      details: error.message,
-    });
   }
-});
+);
 
-// Delete document from a collection
-app.delete("/api/data/:collection/:id", requireAdminKey, async (req, res) => {
-  try {
-    const collectionName = req.params.collection;
-    const id = req.params.id;
-
-    if (!allowedCollections.includes(collectionName)) {
-      return res.status(400).json({
-        error: "Collection not allowed",
-      });
-    }
-
-    const docRef = db.collection(collectionName).doc(id);
-    const docSnapshot = await docRef.get();
-
-    if (!docSnapshot.exists) {
-      return res.status(404).json({
-        error: "Record not found",
-      });
-    }
-
-    await docRef.delete();
-
-    res.json({
-      message: "Record deleted successfully",
-      id,
-    });
-  } catch (error) {
-    console.error("Delete collection record error:", error);
-
-    res.status(500).json({
-      error: "Failed to delete record",
-      details: error.message,
-    });
-  }
-});
-app.use((req, res) => {
-  res.status(404).json({ error: "Route not found" });
-});
-
+// =========================
+// START SERVER
+// =========================
 const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, () => {
-  console.log("Server running on port 5000");
+  console.log(`Server running on port ${PORT}`);
 });
