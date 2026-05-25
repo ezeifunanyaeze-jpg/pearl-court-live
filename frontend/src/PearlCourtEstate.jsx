@@ -470,10 +470,47 @@ function LoginScreen({ onLogin, error }) {
       <style>{`*{box-sizing:border-box;margin:0;padding:0}.inp2{background:#f7f4f0;border:1.5px solid #e4dfd8;border-radius:10px;color:#1a1a2e;padding:10px 13px;font-family:'DM Sans',sans-serif;font-size:13px;width:100%;outline:none}`}</style>
       <div style={{ background: "#fff", borderRadius: 24, padding: "36px 32px", width: "100%", maxWidth: 400, boxShadow: "0 32px 80px #00000040" }}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div style={{ fontFamily: "Playfair Display", fontWeight: 900, fontSize: 24, color: "#1a1a2e" }}>PEARL COURT</div>
-          <div style={{ fontSize: 10, color: "#9090b0", fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", marginTop: 4 }}>Estate Management System</div>
-          <div style={{ fontSize: 11, color: "#b0a890", marginTop: 5 }}>12/14 Oladipo Bateye St, GRA Ikeja</div>
-        </div>
+  <img
+    src="/icon-192.png"
+    alt="Pearl Court EMS"
+    style={{
+      width: 72,
+      height: 72,
+      objectFit: "cover",
+      borderRadius: 18,
+      marginBottom: 12,
+      boxShadow: "0 8px 22px rgba(0,0,0,0.16)",
+    }}
+  />
+
+  <div
+    style={{
+      fontFamily: "Playfair Display",
+      fontWeight: 900,
+      fontSize: 24,
+      color: "#1a1a2e",
+    }}
+  >
+    PEARL COURT
+  </div>
+
+  <div
+    style={{
+      fontSize: 10,
+      color: "#9090b0",
+      fontWeight: 700,
+      letterSpacing: 1.5,
+      textTransform: "uppercase",
+      marginTop: 4,
+    }}
+  >
+    Estate Management System
+  </div>
+
+  <div style={{ fontSize: 11, color: "#b0a890", marginTop: 5 }}>
+    12/14 Oladipo Bateye St, GRA Ikeja
+  </div>
+</div>
         <div style={{ marginBottom: 12 }}>
           <label style={{ fontSize: 10, fontWeight: 700, color: "#9090b0", textTransform: "uppercase", letterSpacing: 0.9, marginBottom: 5, display: "block" }}>Username</label>
           <input className="inp2" placeholder="Enter your username" value={u} onChange={e => setU(e.target.value)} onKeyDown={e => e.key === "Enter" && onLogin(u, p)} autoComplete="off" />
