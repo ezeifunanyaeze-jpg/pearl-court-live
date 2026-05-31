@@ -1,7 +1,6 @@
 const express = require("express");
 const cors = require("cors");
-const http = require("http");
-const { Server } = require("socket.io");
+const nodemailer = require("nodemailer");
 require("dotenv").config();
 
 const db = require("./db");
@@ -9,9 +8,44 @@ const db = require("./db");
 const app = express();
 
 // =========================
+// ENVIRONMENT CONFIG
+// =========================
+
+const PORT = process.env.PORT || 5000;
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "temporary-admin-key";
+
+const allowedOrigins = [
+  "https://pearl-court-frontend.vercel.app",
+  "http://localhost:5173",
+  "http://localhost",
+  "capacitor://localhost",
+  "ionic://localhost",
+];
+
+// =========================
+// MIDDLEWARE
+// =========================
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Allow server-to-server requests, mobile WebView requests, and approved frontend domains
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("Not allowed by CORS"));
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "x-admin-api-key"],
+  })
+);
+
+app.use(express.json({ limit: "10mb" }));
+
+// =========================
 // ADMIN API KEY PROTECTION
 // =========================
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "temporary-admin-key";
 
 function requireAdminKey(req, res, next) {
   const key = req.headers["x-admin-api-key"];
@@ -26,55 +60,21 @@ function requireAdminKey(req, res, next) {
 }
 
 // =========================
-// CORS (SAFE + STABLE)
+// EMAIL TRANSPORTER
 // =========================
-const allowedOrigins = [
-  "https://pearl-court-frontend.vercel.app",
-  "http://localhost:5173",
-];
 
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    allowedHeaders: ["Content-Type", "x-admin-api-key"],
-  })
-);
-
-app.use(express.json());
-
-// =========================
-// SOCKET.IO (OPTIONAL)
-// =========================
-const server = http.createServer(app);
-
-const io = new Server(server, {
-  cors: {
-    origin: allowedOrigins,
-    methods: ["GET", "POST"],
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
   },
 });
 
 // =========================
-// BASIC ROUTES
+// ALLOWED FIRESTORE COLLECTIONS
 // =========================
-app.get("/", (req, res) => {
-  res.send("Pearl Court Backend Running");
-});
 
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok" });
-});
-
-// =========================
-// GENERIC FIRESTORE API
-// =========================
 const allowedCollections = [
   "users",
   "residents",
@@ -91,163 +91,316 @@ const allowedCollections = [
   "emails",
 ];
 
-// GET collection
+// =========================
+// BASIC ROUTES
+// =========================
+
+app.get("/", (req, res) => {
+  res.send("Pearl Court EMS backend is running");
+});
+
+app.get("/api/health", (req, res) => {
+  res.json({
+    status: "ok",
+    service: "Pearl Court EMS Backend",
+    database: "Firestore",
+    emailConfigured: Boolean(process.env.EMAIL_USER && process.env.EMAIL_PASS),
+    time: new Date().toISOString(),
+  });
+});
+
+// =========================
+// GENERIC FIRESTORE API
+// =========================
+
+// Get all documents in a collection
 app.get("/api/data/:collection", async (req, res) => {
   try {
     const collectionName = req.params.collection;
 
     if (!allowedCollections.includes(collectionName)) {
-      return res.status(400).json({ error: "Invalid collection" });
+      return res.status(400).json({
+        error: "Invalid collection",
+      });
     }
 
     const snapshot = await db.collection(collectionName).get();
 
-    const data = snapshot.docs.map(doc => ({
+    const records = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
     }));
 
-    res.json(data);
+    res.json(records);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to fetch data" });
+    console.error("Fetch collection error:", error);
+
+    res.status(500).json({
+      error: "Failed to fetch collection",
+      details: error.message,
+    });
   }
 });
 
-// ADD new record
+// Add one document to a collection
 app.post("/api/data/:collection", requireAdminKey, async (req, res) => {
   try {
     const collectionName = req.params.collection;
 
     if (!allowedCollections.includes(collectionName)) {
-      return res.status(400).json({ error: "Invalid collection" });
+      return res.status(400).json({
+        error: "Invalid collection",
+      });
     }
 
     const payload = {
       ...req.body,
-      createdAt: new Date().toISOString(),
+      createdAt: req.body.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
     const docRef = await db.collection(collectionName).add(payload);
 
-    res.json({
+    res.status(201).json({
       id: docRef.id,
       ...payload,
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to add record" });
+    console.error("Add record error:", error);
+
+    res.status(500).json({
+      error: "Failed to add record",
+      details: error.message,
+    });
   }
 });
 
-// REPLACE collection (bulk)
-app.post(
-  "/api/data/:collection/replace",
-  requireAdminKey,
-  async (req, res) => {
-    try {
-      const collectionName = req.params.collection;
+// Replace all documents in a collection
+app.post("/api/data/:collection/replace", requireAdminKey, async (req, res) => {
+  try {
+    const collectionName = req.params.collection;
 
-      if (!allowedCollections.includes(collectionName)) {
-        return res.status(400).json({ error: "Invalid collection" });
-      }
-
-      if (!Array.isArray(req.body)) {
-        return res.status(400).json({ error: "Body must be array" });
-      }
-
-      const collectionRef = db.collection(collectionName);
-      const snapshot = await collectionRef.get();
-
-      const batch = db.batch();
-
-      // delete old
-      snapshot.forEach(doc => {
-        batch.delete(doc.ref);
+    if (!allowedCollections.includes(collectionName)) {
+      return res.status(400).json({
+        error: "Invalid collection",
       });
+    }
 
-      // add new
-      req.body.forEach(item => {
-        const newRef = collectionRef.doc();
-        batch.set(newRef, {
+    if (!Array.isArray(req.body)) {
+      return res.status(400).json({
+        error: "Request body must be an array",
+      });
+    }
+
+    const collectionRef = db.collection(collectionName);
+    const snapshot = await collectionRef.get();
+
+    const existingDocs = snapshot.docs;
+    const incomingItems = req.body;
+
+    const allOperations = [];
+
+    existingDocs.forEach((doc) => {
+      allOperations.push({
+        type: "delete",
+        ref: doc.ref,
+      });
+    });
+
+    incomingItems.forEach((item) => {
+      const newDocRef = collectionRef.doc();
+      allOperations.push({
+        type: "set",
+        ref: newDocRef,
+        data: {
           ...item,
           updatedAt: new Date().toISOString(),
-        });
+        },
+      });
+    });
+
+    // Firestore batch limit is 500 writes per batch.
+    const batchSize = 450;
+
+    for (let i = 0; i < allOperations.length; i += batchSize) {
+      const batch = db.batch();
+      const operationsChunk = allOperations.slice(i, i + batchSize);
+
+      operationsChunk.forEach((operation) => {
+        if (operation.type === "delete") {
+          batch.delete(operation.ref);
+        }
+
+        if (operation.type === "set") {
+          batch.set(operation.ref, operation.data);
+        }
       });
 
       await batch.commit();
-
-      res.json({
-        message: "Collection replaced",
-        count: req.body.length,
-      });
-    } catch (error) {
-      console.error(error);
-      res.status(500).json({ error: "Replace failed" });
     }
+
+    res.json({
+      message: "Collection replaced successfully",
+      collection: collectionName,
+      count: incomingItems.length,
+    });
+  } catch (error) {
+    console.error("Replace collection error:", error);
+
+    res.status(500).json({
+      error: "Failed to replace collection",
+      details: error.message,
+    });
   }
-);
+});
 
-// UPDATE record
-app.put(
-  "/api/data/:collection/:id",
-  requireAdminKey,
-  async (req, res) => {
-    try {
-      const { collection, id } = req.params;
+// Update one document
+app.put("/api/data/:collection/:id", requireAdminKey, async (req, res) => {
+  try {
+    const collectionName = req.params.collection;
+    const id = req.params.id;
 
-      if (!allowedCollections.includes(collection)) {
-        return res.status(400).json({ error: "Invalid collection" });
-      }
-
-      const ref = db.collection(collection).doc(id);
-
-      await ref.update({
-        ...req.body,
-        updatedAt: new Date().toISOString(),
+    if (!allowedCollections.includes(collectionName)) {
+      return res.status(400).json({
+        error: "Invalid collection",
       });
+    }
 
-      const updated = await ref.get();
+    const docRef = db.collection(collectionName).doc(id);
+    const docSnapshot = await docRef.get();
 
-      res.json({
-        id: updated.id,
-        ...updated.data(),
+    if (!docSnapshot.exists) {
+      return res.status(404).json({
+        error: "Record not found",
       });
-    } catch (error) {
-      console.error(error);
-      res.status(500).json({ error: "Update failed" });
     }
+
+    const updatePayload = {
+      ...req.body,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await docRef.update(updatePayload);
+
+    const updatedDoc = await docRef.get();
+
+    res.json({
+      id: updatedDoc.id,
+      ...updatedDoc.data(),
+    });
+  } catch (error) {
+    console.error("Update record error:", error);
+
+    res.status(500).json({
+      error: "Failed to update record",
+      details: error.message,
+    });
   }
-);
+});
 
-// DELETE record
-app.delete(
-  "/api/data/:collection/:id",
-  requireAdminKey,
-  async (req, res) => {
-    try {
-      const { collection, id } = req.params;
+// Delete one document
+app.delete("/api/data/:collection/:id", requireAdminKey, async (req, res) => {
+  try {
+    const collectionName = req.params.collection;
+    const id = req.params.id;
 
-      if (!allowedCollections.includes(collection)) {
-        return res.status(400).json({ error: "Invalid collection" });
-      }
-
-      await db.collection(collection).doc(id).delete();
-
-      res.json({ message: "Deleted", id });
-    } catch (error) {
-      console.error(error);
-      res.status(500).json({ error: "Delete failed" });
+    if (!allowedCollections.includes(collectionName)) {
+      return res.status(400).json({
+        error: "Invalid collection",
+      });
     }
+
+    const docRef = db.collection(collectionName).doc(id);
+    const docSnapshot = await docRef.get();
+
+    if (!docSnapshot.exists) {
+      return res.status(404).json({
+        error: "Record not found",
+      });
+    }
+
+    await docRef.delete();
+
+    res.json({
+      message: "Record deleted successfully",
+      id,
+    });
+  } catch (error) {
+    console.error("Delete record error:", error);
+
+    res.status(500).json({
+      error: "Failed to delete record",
+      details: error.message,
+    });
   }
-);
+});
+
+// =========================
+// REAL EMAIL API
+// =========================
+
+app.post("/api/send-email", requireAdminKey, async (req, res) => {
+  try {
+    const { to, subject, message } = req.body;
+
+    if (!to || !subject || !message) {
+      return res.status(400).json({
+        error: "Recipient email, subject, and message are required",
+      });
+    }
+
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+      return res.status(500).json({
+        error: "Email service is not configured",
+      });
+    }
+
+    await transporter.sendMail({
+      from: `"Pearl Court EMS" <${process.env.EMAIL_USER}>`,
+      to,
+      subject,
+      text: message,
+      html: `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #1a1a2e;">
+          <h2 style="color:#1a1a2e; margin-bottom: 8px;">Pearl Court EMS</h2>
+          <p>${String(message).replace(/\n/g, "<br />")}</p>
+          <hr style="border: none; border-top: 1px solid #ddd; margin: 24px 0;" />
+          <p style="font-size:12px;color:#777;">
+            This message was sent from Pearl Court Estate Management System.
+          </p>
+        </div>
+      `,
+    });
+
+    res.json({
+      success: true,
+      message: "Email sent successfully",
+    });
+  } catch (error) {
+    console.error("Send email error:", error);
+
+    res.status(500).json({
+      error: "Failed to send email",
+      details: error.message,
+    });
+  }
+});
+
+// =========================
+// FALLBACK ROUTE
+// =========================
+
+app.use((req, res) => {
+  res.status(404).json({
+    error: "Route not found",
+    path: req.originalUrl,
+  });
+});
 
 // =========================
 // START SERVER
 // =========================
-const PORT = process.env.PORT || 5000;
 
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(PORT, () => {
+  console.log(`Pearl Court EMS backend running on port ${PORT}`);
 });
