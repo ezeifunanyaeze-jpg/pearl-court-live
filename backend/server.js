@@ -14,6 +14,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "temporary-admin-key";
 
+// Allowed origins for web, local dev, Android WebView, and iOS WebView
 const allowedOrigins = [
   "https://pearl-court-frontend.vercel.app",
   "http://localhost:5173",
@@ -29,7 +30,10 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow server-to-server requests, mobile WebView requests, and approved frontend domains
+      // Allow:
+      // 1. Approved browser origins
+      // 2. Server-to-server requests with no origin
+      // 3. Capacitor mobile app requests
       if (!origin || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
@@ -62,9 +66,21 @@ function requireAdminKey(req, res, next) {
 // =========================
 // EMAIL TRANSPORTER
 // =========================
+//
+// IMPORTANT:
+// This uses smtp.gmail.com with port 587 and family: 4.
+// family: 4 forces IPv4 and avoids Render IPv6 ENETUNREACH errors.
+//
 
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtp.gmail.com",
+  port: 587,
+  secure: false,
+  family: 4,
+  requireTLS: true,
+  connectionTimeout: 30000,
+  greetingTimeout: 30000,
+  socketTimeout: 30000,
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
@@ -113,7 +129,7 @@ app.get("/api/health", (req, res) => {
 // GENERIC FIRESTORE API
 // =========================
 
-// Get all documents in a collection
+// Get all records in a collection
 app.get("/api/data/:collection", async (req, res) => {
   try {
     const collectionName = req.params.collection;
@@ -142,7 +158,7 @@ app.get("/api/data/:collection", async (req, res) => {
   }
 });
 
-// Add one document to a collection
+// Add one record to a collection
 app.post("/api/data/:collection", requireAdminKey, async (req, res) => {
   try {
     const collectionName = req.params.collection;
@@ -175,7 +191,8 @@ app.post("/api/data/:collection", requireAdminKey, async (req, res) => {
   }
 });
 
-// Replace all documents in a collection
+// Replace all records in a collection
+// This supports your frontend cloud-sync system.
 app.post("/api/data/:collection/replace", requireAdminKey, async (req, res) => {
   try {
     const collectionName = req.params.collection;
@@ -195,21 +212,19 @@ app.post("/api/data/:collection/replace", requireAdminKey, async (req, res) => {
     const collectionRef = db.collection(collectionName);
     const snapshot = await collectionRef.get();
 
-    const existingDocs = snapshot.docs;
-    const incomingItems = req.body;
+    const operations = [];
 
-    const allOperations = [];
-
-    existingDocs.forEach((doc) => {
-      allOperations.push({
+    snapshot.docs.forEach((doc) => {
+      operations.push({
         type: "delete",
         ref: doc.ref,
       });
     });
 
-    incomingItems.forEach((item) => {
+    req.body.forEach((item) => {
       const newDocRef = collectionRef.doc();
-      allOperations.push({
+
+      operations.push({
         type: "set",
         ref: newDocRef,
         data: {
@@ -219,14 +234,15 @@ app.post("/api/data/:collection/replace", requireAdminKey, async (req, res) => {
       });
     });
 
-    // Firestore batch limit is 500 writes per batch.
+    // Firestore batch limit is 500 writes.
+    // We use 450 to stay safely below the limit.
     const batchSize = 450;
 
-    for (let i = 0; i < allOperations.length; i += batchSize) {
+    for (let i = 0; i < operations.length; i += batchSize) {
       const batch = db.batch();
-      const operationsChunk = allOperations.slice(i, i + batchSize);
+      const chunk = operations.slice(i, i + batchSize);
 
-      operationsChunk.forEach((operation) => {
+      chunk.forEach((operation) => {
         if (operation.type === "delete") {
           batch.delete(operation.ref);
         }
@@ -242,7 +258,7 @@ app.post("/api/data/:collection/replace", requireAdminKey, async (req, res) => {
     res.json({
       message: "Collection replaced successfully",
       collection: collectionName,
-      count: incomingItems.length,
+      count: req.body.length,
     });
   } catch (error) {
     console.error("Replace collection error:", error);
@@ -254,7 +270,7 @@ app.post("/api/data/:collection/replace", requireAdminKey, async (req, res) => {
   }
 });
 
-// Update one document
+// Update one record
 app.put("/api/data/:collection/:id", requireAdminKey, async (req, res) => {
   try {
     const collectionName = req.params.collection;
@@ -298,7 +314,7 @@ app.put("/api/data/:collection/:id", requireAdminKey, async (req, res) => {
   }
 });
 
-// Delete one document
+// Delete one record
 app.delete("/api/data/:collection/:id", requireAdminKey, async (req, res) => {
   try {
     const collectionName = req.params.collection;
