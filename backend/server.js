@@ -1,20 +1,27 @@
 const express = require("express");
 const cors = require("cors");
 const nodemailer = require("nodemailer");
+const dns = require("dns");
 require("dotenv").config();
 
 const db = require("./db");
 
 const app = express();
 
-// =========================
+// =====================================================
 // ENVIRONMENT CONFIG
-// =========================
+// =====================================================
 
 const PORT = process.env.PORT || 5000;
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "temporary-admin-key";
 
-// Allowed origins for web, local dev, Android WebView, and iOS WebView
+const EMAIL_USER = process.env.EMAIL_USER || "";
+const EMAIL_PASS = process.env.EMAIL_PASS || "";
+
+// =====================================================
+// CORS CONFIG
+// =====================================================
+
 const allowedOrigins = [
   "https://pearl-court-frontend.vercel.app",
   "http://localhost:5173",
@@ -23,17 +30,13 @@ const allowedOrigins = [
   "ionic://localhost",
 ];
 
-// =========================
-// MIDDLEWARE
-// =========================
-
 app.use(
   cors({
     origin: function (origin, callback) {
       // Allow:
-      // 1. Approved browser origins
-      // 2. Server-to-server requests with no origin
-      // 3. Capacitor mobile app requests
+      // - approved browser origins
+      // - server-to-server calls with no origin
+      // - Capacitor/Ionic mobile WebView requests
       if (!origin || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
@@ -47,9 +50,9 @@ app.use(
 
 app.use(express.json({ limit: "10mb" }));
 
-// =========================
-// ADMIN API KEY PROTECTION
-// =========================
+// =====================================================
+// ADMIN API KEY MIDDLEWARE
+// =====================================================
 
 function requireAdminKey(req, res, next) {
   const key = req.headers["x-admin-api-key"];
@@ -63,33 +66,42 @@ function requireAdminKey(req, res, next) {
   next();
 }
 
-// =========================
+// =====================================================
 // EMAIL TRANSPORTER
-// =========================
+// =====================================================
 //
 // IMPORTANT:
-// This uses smtp.gmail.com with port 587 and family: 4.
-// family: 4 forces IPv4 and avoids Render IPv6 ENETUNREACH errors.
+// Render was trying to connect to Gmail over IPv6 and failing with:
+// ENETUNREACH 2607:f8b0...
+//
+// This transporter forces IPv4 DNS lookup and uses port 587.
+// This is the correct Gmail SMTP setup for this deployment.
 //
 
 const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
   port: 587,
   secure: false,
-  family: 4,
   requireTLS: true,
+
+  // Force IPv4 DNS resolution to avoid Render IPv6 ENETUNREACH errors
+  lookup: function (hostname, options, callback) {
+    dns.lookup(hostname, { family: 4 }, callback);
+  },
+
   connectionTimeout: 30000,
   greetingTimeout: 30000,
   socketTimeout: 30000,
+
   auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
+    user: EMAIL_USER,
+    pass: EMAIL_PASS,
   },
 });
 
-// =========================
+// =====================================================
 // ALLOWED FIRESTORE COLLECTIONS
-// =========================
+// =====================================================
 
 const allowedCollections = [
   "users",
@@ -107,9 +119,9 @@ const allowedCollections = [
   "emails",
 ];
 
-// =========================
+// =====================================================
 // BASIC ROUTES
-// =========================
+// =====================================================
 
 app.get("/", (req, res) => {
   res.send("Pearl Court EMS backend is running");
@@ -120,14 +132,51 @@ app.get("/api/health", (req, res) => {
     status: "ok",
     service: "Pearl Court EMS Backend",
     database: "Firestore",
-    emailConfigured: Boolean(process.env.EMAIL_USER && process.env.EMAIL_PASS),
+    emailConfigured: Boolean(EMAIL_USER && EMAIL_PASS),
     time: new Date().toISOString(),
   });
 });
 
-// =========================
+// =====================================================
+// EMAIL TEST / DEBUG ROUTE
+// =====================================================
+//
+// This confirms whether SMTP login/connection is working.
+// It is protected by ADMIN_API_KEY.
+//
+
+app.get("/api/email-status", requireAdminKey, async (req, res) => {
+  try {
+    if (!EMAIL_USER || !EMAIL_PASS) {
+      return res.status(500).json({
+        ok: false,
+        error: "EMAIL_USER or EMAIL_PASS is missing",
+      });
+    }
+
+    await transporter.verify();
+
+    res.json({
+      ok: true,
+      message: "Email transporter is ready",
+      emailUser: EMAIL_USER,
+    });
+  } catch (error) {
+    console.error("Email transporter verify error:", error);
+
+    res.status(500).json({
+      ok: false,
+      error: "Email transporter verification failed",
+      details: error.message,
+      code: error.code || null,
+      command: error.command || null,
+    });
+  }
+});
+
+// =====================================================
 // GENERIC FIRESTORE API
-// =========================
+// =====================================================
 
 // Get all records in a collection
 app.get("/api/data/:collection", async (req, res) => {
@@ -192,7 +241,7 @@ app.post("/api/data/:collection", requireAdminKey, async (req, res) => {
 });
 
 // Replace all records in a collection
-// This supports your frontend cloud-sync system.
+// Used by frontend cloud sync.
 app.post("/api/data/:collection/replace", requireAdminKey, async (req, res) => {
   try {
     const collectionName = req.params.collection;
@@ -234,8 +283,8 @@ app.post("/api/data/:collection/replace", requireAdminKey, async (req, res) => {
       });
     });
 
-    // Firestore batch limit is 500 writes.
-    // We use 450 to stay safely below the limit.
+    // Firestore supports max 500 writes per batch.
+    // Use 450 for safety.
     const batchSize = 450;
 
     for (let i = 0; i < operations.length; i += batchSize) {
@@ -351,9 +400,9 @@ app.delete("/api/data/:collection/:id", requireAdminKey, async (req, res) => {
   }
 });
 
-// =========================
+// =====================================================
 // REAL EMAIL API
-// =========================
+// =====================================================
 
 app.post("/api/send-email", requireAdminKey, async (req, res) => {
   try {
@@ -365,14 +414,14 @@ app.post("/api/send-email", requireAdminKey, async (req, res) => {
       });
     }
 
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    if (!EMAIL_USER || !EMAIL_PASS) {
       return res.status(500).json({
         error: "Email service is not configured",
       });
     }
 
     await transporter.sendMail({
-      from: `"Pearl Court EMS" <${process.env.EMAIL_USER}>`,
+      from: `"Pearl Court EMS" <${EMAIL_USER}>`,
       to,
       subject,
       text: message,
@@ -398,13 +447,15 @@ app.post("/api/send-email", requireAdminKey, async (req, res) => {
     res.status(500).json({
       error: "Failed to send email",
       details: error.message,
+      code: error.code || null,
+      command: error.command || null,
     });
   }
 });
 
-// =========================
+// =====================================================
 // FALLBACK ROUTE
-// =========================
+// =====================================================
 
 app.use((req, res) => {
   res.status(404).json({
@@ -413,10 +464,11 @@ app.use((req, res) => {
   });
 });
 
-// =========================
+// =====================================================
 // START SERVER
-// =========================
+// =====================================================
 
 app.listen(PORT, () => {
   console.log(`Pearl Court EMS backend running on port ${PORT}`);
 });
+``
