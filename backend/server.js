@@ -1,7 +1,5 @@
 const express = require("express");
 const cors = require("cors");
-const nodemailer = require("nodemailer");
-const dns = require("dns");
 require("dotenv").config();
 
 const db = require("./db");
@@ -13,10 +11,12 @@ const app = express();
 // =====================================================
 
 const PORT = process.env.PORT || 5000;
+
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "temporary-admin-key";
 
+const BREVO_API_KEY = process.env.BREVO_API_KEY || "";
 const EMAIL_USER = process.env.EMAIL_USER || "";
-const EMAIL_PASS = process.env.EMAIL_PASS || "";
+const EMAIL_FROM_NAME = process.env.EMAIL_FROM_NAME || "Pearl Court EMS";
 
 // =====================================================
 // CORS CONFIG
@@ -33,10 +33,6 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow:
-      // - approved browser origins
-      // - server-to-server calls with no origin
-      // - Capacitor/Ionic mobile WebView requests
       if (!origin || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
@@ -51,7 +47,7 @@ app.use(
 app.use(express.json({ limit: "10mb" }));
 
 // =====================================================
-// ADMIN API KEY MIDDLEWARE
+// ADMIN API KEY PROTECTION
 // =====================================================
 
 function requireAdminKey(req, res, next) {
@@ -65,39 +61,6 @@ function requireAdminKey(req, res, next) {
 
   next();
 }
-
-// =====================================================
-// EMAIL TRANSPORTER
-// =====================================================
-//
-// IMPORTANT:
-// Render was trying to connect to Gmail over IPv6 and failing with:
-// ENETUNREACH 2607:f8b0...
-//
-// This transporter forces IPv4 DNS lookup and uses port 587.
-// This is the correct Gmail SMTP setup for this deployment.
-//
-
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587,
-  secure: false,
-  requireTLS: true,
-
-  // Force IPv4 DNS resolution to avoid Render IPv6 ENETUNREACH errors
-  lookup: function (hostname, options, callback) {
-    dns.lookup(hostname, { family: 4 }, callback);
-  },
-
-  connectionTimeout: 30000,
-  greetingTimeout: 30000,
-  socketTimeout: 30000,
-
-  auth: {
-    user: EMAIL_USER,
-    pass: EMAIL_PASS,
-  },
-});
 
 // =====================================================
 // ALLOWED FIRESTORE COLLECTIONS
@@ -132,46 +95,23 @@ app.get("/api/health", (req, res) => {
     status: "ok",
     service: "Pearl Court EMS Backend",
     database: "Firestore",
-    emailConfigured: Boolean(EMAIL_USER && EMAIL_PASS),
+    emailProvider: "Brevo",
+    emailConfigured: Boolean(BREVO_API_KEY && EMAIL_USER),
     time: new Date().toISOString(),
   });
 });
 
-// =====================================================
-// EMAIL TEST / DEBUG ROUTE
-// =====================================================
-//
-// This confirms whether SMTP login/connection is working.
-// It is protected by ADMIN_API_KEY.
-//
-
-app.get("/api/email-status", requireAdminKey, async (req, res) => {
-  try {
-    if (!EMAIL_USER || !EMAIL_PASS) {
-      return res.status(500).json({
-        ok: false,
-        error: "EMAIL_USER or EMAIL_PASS is missing",
-      });
-    }
-
-    await transporter.verify();
-
-    res.json({
-      ok: true,
-      message: "Email transporter is ready",
-      emailUser: EMAIL_USER,
-    });
-  } catch (error) {
-    console.error("Email transporter verify error:", error);
-
-    res.status(500).json({
-      ok: false,
-      error: "Email transporter verification failed",
-      details: error.message,
-      code: error.code || null,
-      command: error.command || null,
-    });
-  }
+app.get("/api/email-status", requireAdminKey, (req, res) => {
+  res.json({
+    ok: Boolean(BREVO_API_KEY && EMAIL_USER),
+    provider: "Brevo",
+    emailUser: EMAIL_USER || null,
+    fromName: EMAIL_FROM_NAME,
+    message:
+      BREVO_API_KEY && EMAIL_USER
+        ? "Brevo email API is configured"
+        : "BREVO_API_KEY or EMAIL_USER is missing",
+  });
 });
 
 // =====================================================
@@ -241,7 +181,7 @@ app.post("/api/data/:collection", requireAdminKey, async (req, res) => {
 });
 
 // Replace all records in a collection
-// Used by frontend cloud sync.
+// Used by frontend cloud sync
 app.post("/api/data/:collection/replace", requireAdminKey, async (req, res) => {
   try {
     const collectionName = req.params.collection;
@@ -283,8 +223,7 @@ app.post("/api/data/:collection/replace", requireAdminKey, async (req, res) => {
       });
     });
 
-    // Firestore supports max 500 writes per batch.
-    // Use 450 for safety.
+    // Firestore batch limit is 500 writes.
     const batchSize = 450;
 
     for (let i = 0; i < operations.length; i += batchSize) {
@@ -401,7 +340,7 @@ app.delete("/api/data/:collection/:id", requireAdminKey, async (req, res) => {
 });
 
 // =====================================================
-// REAL EMAIL API
+// BREVO REAL EMAIL API
 // =====================================================
 
 app.post("/api/send-email", requireAdminKey, async (req, res) => {
@@ -414,41 +353,94 @@ app.post("/api/send-email", requireAdminKey, async (req, res) => {
       });
     }
 
-    if (!EMAIL_USER || !EMAIL_PASS) {
+    if (!BREVO_API_KEY || !EMAIL_USER) {
       return res.status(500).json({
-        error: "Email service is not configured",
+        error: "Brevo email service is not configured",
       });
     }
 
-    await transporter.sendMail({
-      from: `"Pearl Court EMS" <${EMAIL_USER}>`,
-      to,
+    const recipients = Array.isArray(to)
+      ? to.map((email) => ({ email: String(email).trim() })).filter((r) => r.email)
+      : String(to)
+          .split(",")
+          .map((email) => email.trim())
+          .filter(Boolean)
+          .map((email) => ({ email }));
+
+    if (recipients.length === 0) {
+      return res.status(400).json({
+        error: "No valid recipient email address provided",
+      });
+    }
+
+    const cleanMessage = String(message);
+
+    const htmlContent = `
+      <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #1a1a2e;">
+        <h2 style="color:#1a1a2e; margin-bottom: 8px;">Pearl Court EMS</h2>
+        <p>${cleanMessage.replace(/\n/g, "<br />")}</p>
+        <hr style="border: none; border-top: 1px solid #ddd; margin: 24px 0;" />
+        <p style="font-size:12px;color:#777;">
+          This message was sent from Pearl Court Estate Management System.
+        </p>
+      </div>
+    `;
+
+    const brevoPayload = {
+      sender: {
+        name: EMAIL_FROM_NAME,
+        email: EMAIL_USER,
+      },
+      to: recipients,
       subject,
-      text: message,
-      html: `
-        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #1a1a2e;">
-          <h2 style="color:#1a1a2e; margin-bottom: 8px;">Pearl Court EMS</h2>
-          <p>${String(message).replace(/\n/g, "<br />")}</p>
-          <hr style="border: none; border-top: 1px solid #ddd; margin: 24px 0;" />
-          <p style="font-size:12px;color:#777;">
-            This message was sent from Pearl Court Estate Management System.
-          </p>
-        </div>
-      `,
+      textContent: cleanMessage,
+      htmlContent,
+    };
+
+    const brevoResponse = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "api-key": BREVO_API_KEY,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(brevoPayload),
     });
+
+    const responseText = await brevoResponse.text();
+
+    if (!brevoResponse.ok) {
+      console.error("Brevo send error:", responseText);
+
+      return res.status(500).json({
+        error: "Failed to send email through Brevo",
+        provider: "Brevo",
+        status: brevoResponse.status,
+        details: responseText,
+      });
+    }
+
+    let parsedResponse;
+
+    try {
+      parsedResponse = JSON.parse(responseText);
+    } catch {
+      parsedResponse = responseText;
+    }
 
     res.json({
       success: true,
       message: "Email sent successfully",
+      provider: "Brevo",
+      response: parsedResponse,
     });
   } catch (error) {
     console.error("Send email error:", error);
 
     res.status(500).json({
       error: "Failed to send email",
+      provider: "Brevo",
       details: error.message,
-      code: error.code || null,
-      command: error.command || null,
     });
   }
 });
@@ -471,4 +463,3 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`Pearl Court EMS backend running on port ${PORT}`);
 });
-``
