@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Pearl Court EMS</string>
+    <string name="title_activity_main">Pearl Court EMS</string>
+    <string name="package_name">com.pearlcourt.ems</string>
+    <string name="custom_url_scheme">com.pearlcourt.ems</string>
+</resources>

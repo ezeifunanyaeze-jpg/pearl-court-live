@@ -7,13 +7,61 @@ const isExpired = (expires) => new Date() > new Date(expires);
 const daysUntil = (dateStr) => Math.ceil((new Date(dateStr) - new Date()) / 86400000);
 const daysSince = (dateStr) => Math.ceil((new Date() - new Date(dateStr)) / 86400000);
 const today = new Date();
-const ESTATE_EMAIL = "estatemanager@pearlcourt.ng";
+const ESTATE_EMAIL = "pearlcourtestategra@gmail.com";
 
-// ─── EMAIL SIMULATION ──────────────────────────────────────────────────────────
+// ——— EMAIL SYSTEM: INTERNAL INBOX + REAL EMAIL ————————————————————————
 let _emailInbox = [];
+
+const sendRealEmail = async (to, subject, message) => {
+  try {
+    console.log("✅ Attempting to send email to:", to);
+
+    if (!to || !String(to).includes("@")) {
+      console.log("❌ Invalid email address:", to);
+      return;
+    }
+
+    const response = await fetch(
+      "https://pearl-court-backend.onrender.com/api/send-email",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-api-key": "PCE-ADMIN-2026-LIVE",
+        },
+        body: JSON.stringify({
+          to,
+          subject,
+          message,
+        }),
+      }
+    );
+
+    const result = await response.json();
+
+    console.log("✅ Brevo response:", result);
+
+  } catch (error) {
+    console.error("❌ Real email failed:", error);
+  }
+};
+
 const sendEmailSim = (to, subject, body, tag = "general") => {
-  const entry = { id: Date.now() + Math.random(), to, subject, body, tag, sentAt: new Date().toISOString(), read: false };
+  const entry = {
+    id: Date.now() + Math.random(),
+    to,
+    subject,
+    body,
+    tag,
+    sentAt: new Date().toISOString(),
+    read: false,
+  };
+
   _emailInbox = [entry, ..._emailInbox];
+
+  // Send real email in the background without breaking the app UI
+  sendRealEmail(to, subject, body);
+
   return entry;
 };
 
@@ -109,6 +157,95 @@ const CSS = `
 .search-inp{background:#f7f4f0;border:1.5px solid #e4dfd8;border-radius:10px;color:#1a1a2e;padding:8px 12px;font-family:'DM Sans',sans-serif;font-size:12px;outline:none;width:200px}
 .email-preview{background:#f7f4f0;border-radius:10px;padding:14px;font-size:12px;color:#5a5a7a;font-family:'DM Mono',monospace;white-space:pre-wrap;max-height:200px;overflow-y:auto;line-height:1.6}
 .number-tag{background:#c8a84b;color:#fff;border-radius:10px;padding:1px 6px;font-size:10px;font-weight:700;margin-left:4px}
+/* ================================
+   MOBILE APP LAYOUT FIX
+   ================================ */
+
+.mobile-menu-button {
+  display: none;
+}
+
+.mobile-sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .mobile-menu-button {
+    display: flex;
+    position: fixed;
+    top: calc(14px + env(safe-area-inset-top));
+    left: 14px;
+    z-index: 4000;
+    width: 46px;
+    height: 46px;
+    border: none;
+    border-radius: 14px;
+    background: #1a1a2e;
+    color: #ffffff;
+    font-size: 24px;
+    font-weight: 800;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+  }
+
+  .app-sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    bottom: 0 !important;
+    width: min(82vw, 320px) !important;
+    max-width: 320px !important;
+    height: 100vh !important;
+    z-index: 3500 !important;
+    transform: translateX(-105%);
+    transition: transform 0.25s ease;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    box-shadow: 18px 0 40px rgba(0, 0, 0, 0.22);
+  }
+
+  .app-sidebar.open {
+    transform: translateX(0);
+  }
+
+  .mobile-sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 3000;
+    background: rgba(0, 0, 0, 0.38);
+    backdrop-filter: blur(2px);
+  }
+
+  body {
+    overflow-x: hidden;
+  }
+
+  .card,
+  .card-dark {
+    max-width: 100% !important;
+    overflow-x: auto !important;
+  }
+
+  .thead,
+  .trow,
+  table {
+    min-width: 620px;
+  }
+
+  button,
+  .btn,
+  .sb-btn {
+    min-height: 44px;
+  }
+}
+
+@media (min-width: 769px) {
+  .app-sidebar {
+    transform: none !important;
+  }
+}
 `;
 
 export default function PearlCourtEstate() {
@@ -116,6 +253,7 @@ export default function PearlCourtEstate() {
   const [currentUser, setCurrentUser] = useState(null);
   const [loginError, setLoginError] = useState("");
   const [tab, setTab] = useState("dashboard");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [residents, setResidents] = useState(seedResidents);
   const [vehicles, setVehicles] = useState(seedVehicles);
   const [accessCodes, setAccessCodes] = useState([]);
@@ -1187,26 +1325,109 @@ function GenerateCodeModal({ residents, accessCodes, setAccessCodes, isRestricte
   </M>;
 }
 
-function AddResidentModal({ residents, setResidents, logAction, currentUser, closeModal, notify, dispatchEmail }) {
-  const [f, setF] = useState({ name: "", apt: "", phone: "", email: "" });
+function AddResidentModal({ residents, setResidents, logAction, currentUser, closeModal, notify }) {
+  const [f, setF] = useState({
+    name: "",
+    apt: "",
+    phone: "",
+    email: "",
+  });
+
   const add = () => {
-    if (!f.name || !f.apt || !f.phone || !f.email) { notify("All fields required", "warn"); return; }
-    if (residents.find(r => r.apt.toLowerCase() === f.apt.toLowerCase())) { notify("Apartment already registered", "warn"); return; }
-    const nr = { id: Date.now(), ...f, status: "active", duesOwed: false, suspendedSince: null };
-    setResidents(rs => [...rs, nr]);
+    if (!f.name || !f.apt || !f.phone || !f.email) {
+      notify("All fields required", "warn");
+      return;
+    }
+
+    if (residents.find(r => r.apt.toLowerCase() === f.apt.toLowerCase())) {
+      notify("Apartment already registered", "warn");
+      return;
+    }
+
+    const newResident = {
+      id: Date.now(),
+      name: f.name,
+      apt: f.apt,
+      phone: f.phone,
+      email: f.email,
+      status: "active",
+      duesOwed: false,
+      suspendedSince: null,
+    };
+
+    setResidents(rs => [...rs, newResident]);
+
     logAction(currentUser, "Registered resident", `${f.name} – ${f.apt}`);
-    dispatchEmail(f.email, "Welcome to Pearl Court Estate", `Dear ${f.name},\n\nWelcome to Pearl Court Estate!\n\nYour Apartment: ${f.apt}\nPhone on record: ${f.phone}\n\nYour system login will be created by the estate admin. Please contact the admin to receive your username and password.\n\nFor estate queries: ${ESTATE_EMAIL}\n\n— Pearl Court Estate Management`, "general");
-    notify("Resident registered. Welcome email sent.");
+
+    // ✅ THIS IS THE IMPORTANT FIX
+    sendRealEmail(
+      f.email.trim(),
+      "Welcome to Pearl Court Estate",
+      `Dear ${f.name},
+
+Welcome to Pearl Court Estate!
+
+Your Apartment: ${f.apt}
+Phone on record: ${f.phone}
+
+Your system login will be created by the estate admin.
+
+— Pearl Court Estate`
+    );
+
+    notify("✅ Resident registered & email sent");
     closeModal();
   };
-  return <M title="👤 Register New Resident" closeModal={closeModal}>
-    <div className="frow"><label className="flabel">Full Name *</label><input className="inp" placeholder="Dr. Emeka Nwosu" value={f.name} onChange={e => setF(x => ({ ...x, name: e.target.value }))} /></div>
-    <div className="frow"><label className="flabel">Apartment Number *</label><input className="inp" placeholder="Apt 6F" value={f.apt} onChange={e => setF(x => ({ ...x, apt: e.target.value }))} /></div>
-    <div className="frow"><label className="flabel">Phone Number *</label><input className="inp" placeholder="08012345678" value={f.phone} onChange={e => setF(x => ({ ...x, phone: e.target.value }))} /></div>
-    <div className="frow"><label className="flabel">Email Address *</label><input className="inp" placeholder="emeka@gmail.com" value={f.email} onChange={e => setF(x => ({ ...x, email: e.target.value }))} /></div>
-    <div className="alert-bar alert-blue" style={{ fontSize: 12, marginBottom: 14 }}>📧 A welcome email will be sent to the resident's email address automatically.</div>
-    <div style={{ display: "flex", gap: 10 }}><button className="btn btn-primary" style={{ flex: 1 }} onClick={add}>Register Resident</button><button className="btn btn-outline" onClick={closeModal}>Cancel</button></div>
-  </M>;
+
+  return (
+    <M title="👤 Register New Resident" closeModal={closeModal}>
+      <div className="frow">
+        <label className="flabel">Full Name *</label>
+        <input
+          className="inp"
+          value={f.name}
+          onChange={e => setF(x => ({ ...x, name: e.target.value }))}
+        />
+      </div>
+
+      <div className="frow">
+        <label className="flabel">Apartment Number *</label>
+        <input
+          className="inp"
+          value={f.apt}
+          onChange={e => setF(x => ({ ...x, apt: e.target.value }))}
+        />
+      </div>
+
+      <div className="frow">
+        <label className="flabel">Phone *</label>
+        <input
+          className="inp"
+          value={f.phone}
+          onChange={e => setF(x => ({ ...x, phone: e.target.value }))}
+        />
+      </div>
+
+      <div className="frow">
+        <label className="flabel">Email *</label>
+        <input
+          className="inp"
+          value={f.email}
+          onChange={e => setF(x => ({ ...x, email: e.target.value }))}
+        />
+      </div>
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <button className="btn btn-primary" style={{ flex: 1 }} onClick={add}>
+          Register Resident
+        </button>
+
+        <button className="btn btn-outline" onClick={closeModal}>
+          Cancel
+        </button>
+      </div>
+    </M>
+  );
 }
 
 function RecordPaymentModal({ modal, dues, setDues, residents, setResidents, transactions, setTransactions, closeModal, notify, currentUser, logAction, dispatchEmail }) {
