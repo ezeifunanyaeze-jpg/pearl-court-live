@@ -254,6 +254,7 @@ export default function PearlCourtEstate() {
   const [loginError, setLoginError] = useState("");
   const [tab, setTab] = useState("dashboard");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const [residents, setResidents] = useState(seedResidents);
   const [vehicles, setVehicles] = useState(seedVehicles);
   const [accessCodes, setAccessCodes] = useState([]);
@@ -460,6 +461,19 @@ useEffect(() => {
 }, [emails, cloudReady]);
   useEffect(() => { const t = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(t); }, []);
 
+  useEffect(() => {
+    const updateMobileState = () => {
+      setIsMobile(window.innerWidth <= 768);
+    };
+
+    updateMobileState();
+    window.addEventListener("resize", updateMobileState);
+
+    return () => {
+      window.removeEventListener("resize", updateMobileState);
+    };
+  }, []);
+
   // Auto-send maintenance alerts on load
   useEffect(() => {
     const toSend = [];
@@ -546,9 +560,88 @@ useEffect(() => {
       <style>{CSS}</style>
       {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
       {modal && <ModalRouter modal={modal} closeModal={() => setModal(null)} {...sharedProps} />}
-      <div style={{ display: "flex", minHeight: "100vh" }}>
+      <div className="app-shell" style={{ display: isMobile ? "block" : "flex", minHeight: "100vh", width: "100%" }}>
+        <button
+          className="mobile-menu-button"
+          onClick={() => setMobileMenuOpen(true)}
+          aria-label="Open menu"
+          style={{
+            display: isMobile ? "flex" : "none",
+            position: "fixed",
+            top: "14px",
+            left: "14px",
+            zIndex: 99999,
+            width: "46px",
+            height: "46px",
+            border: "none",
+            borderRadius: "14px",
+            background: "#1a1a2e",
+            color: "#ffffff",
+            fontSize: "24px",
+            fontWeight: 800,
+            alignItems: "center",
+            justifyContent: "center",
+            boxShadow: "0 10px 28px rgba(0,0,0,0.25)",
+            cursor: "pointer",
+          }}
+        >
+          ☰
+        </button>
+
+        {isMobile && mobileMenuOpen && (
+          <div
+            className="mobile-sidebar-backdrop"
+            onClick={() => setMobileMenuOpen(false)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 90000,
+              background: "rgba(0,0,0,0.38)",
+              backdropFilter: "blur(2px)",
+            }}
+          />
+        )}
         {/* Sidebar */}
-        <div style={{ width: 218, background: "#faf8f4", borderRight: "1px solid #e4dfd8", display: "flex", flexDirection: "column", padding: "18px 10px", position: "sticky", top: 0, height: "100vh", overflowY: "auto", flexShrink: 0 }}>
+        <div
+          className={`app-sidebar ${mobileMenuOpen ? "open" : ""}`}
+          style={
+            isMobile
+              ? {
+                  width: "min(82vw, 320px)",
+                  maxWidth: "320px",
+                  background: "#faf8f4",
+                  borderRight: "1px solid #e4dfd8",
+                  display: "flex",
+                  flexDirection: "column",
+                  padding: "18px 10px",
+                  position: "fixed",
+                  top: 0,
+                  left: 0,
+                  bottom: 0,
+                  height: "100vh",
+                  overflowY: "auto",
+                  overflowX: "hidden",
+                  flexShrink: 0,
+                  zIndex: 95000,
+                  transform: mobileMenuOpen ? "translateX(0)" : "translateX(-110%)",
+                  transition: "transform 0.25s ease",
+                  boxShadow: "18px 0 40px rgba(0,0,0,0.25)",
+                }
+              : {
+                  width: 218,
+                  background: "#faf8f4",
+                  borderRight: "1px solid #e4dfd8",
+                  display: "flex",
+                  flexDirection: "column",
+                  padding: "18px 10px",
+                  position: "sticky",
+                  top: 0,
+                  height: "100vh",
+                  overflowY: "auto",
+                  flexShrink: 0,
+                }
+          }
+        >
           <div style={{ padding: "0 6px 16px", borderBottom: "1px solid #e4dfd8", marginBottom: 12 }}>
             <div style={{ fontFamily: "Playfair Display", fontWeight: 900, fontSize: 15, color: "#1a1a2e" }}>PEARL COURT</div>
             <div style={{ fontSize: 9, color: "#9090b0", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>Estate Management</div>
@@ -566,7 +659,14 @@ useEffect(() => {
             <div style={{ background: "#fde8e8", border: "1px solid #c0392b44", borderRadius: 10, padding: "7px 10px", marginBottom: 10, fontSize: 11, color: "#c0392b", fontWeight: 700 }}>⛔ {restrictedApts.length} apt(s) restricted</div>
           )}
           {visibleTabs.map(t => (
-            <button key={t.id} className={`sb-btn ${tab === t.id ? "active" : ""}`} onClick={() => setTab(t.id)}>
+            <button
+              key={t.id}
+              className={`sb-btn ${tab === t.id ? "active" : ""}`}
+              onClick={() => {
+                setTab(t.id);
+                setMobileMenuOpen(false);
+              }}
+            >
               <span style={{ fontSize: 14 }}>{t.icon}</span>
               <span style={{ flex: 1 }}>{t.label}</span>
               {t.id === "email" && unreadEmails > 0 && <span className="number-tag">{unreadEmails}</span>}
@@ -582,7 +682,17 @@ useEffect(() => {
           </div>
         </div>
         {/* Main */}
-        <div style={{ flex: 1, padding: "22px", overflowY: "auto" }}>
+        <div
+          className="app-main"
+          style={{
+            flex: 1,
+            padding: isMobile ? "72px 14px 18px" : "22px",
+            overflowY: "auto",
+            overflowX: "hidden",
+            width: "100%",
+            maxWidth: "100%",
+          }}
+        >
           {tab === "dashboard" && <Dashboard {...sharedProps} balance={balance} overdueCount={overdueCount} overdueActivities={overdueActivities} setTab={setTab} role={role} />}
           {tab === "access" && <AccessControl {...sharedProps} role={role} />}
           {tab === "dues" && <DuesPayments {...sharedProps} role={role} />}
