@@ -112,6 +112,11 @@ const ROLE_COLORS = { admin: "#1a1a2e", security: "#1b5e3a", accountant: "#7c3a0
 const ROLE_LABELS = { admin: "Admin", security: "Security", accountant: "Accountant", resident: "Resident" };
 
 const CSS = `
+/* FINAL MOBILE MENU FIX - NO DRAWER BACKDROP, NO BLUR */
+.mobile-sidebar-backdrop,.mobile-backdrop{display:none!important;pointer-events:none!important;background:transparent!important;filter:none!important;-webkit-filter:none!important;backdrop-filter:none!important;}
+.pce-mobile-menu-toggle,.pce-mobile-menu-panel,.pce-mobile-menu-panel *,.pce-app-main{filter:none!important;-webkit-filter:none!important;backdrop-filter:none!important;opacity:1!important;}
+@media(max-width:768px){.pce-desktop-sidebar{display:none!important}.pce-mobile-menu-toggle{z-index:999999!important}.pce-mobile-menu-panel{z-index:999998!important}}
+
 *{box-sizing:border-box;margin:0;padding:0}
 ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:#f0ede8}::-webkit-scrollbar-thumb{background:#c8b89055;border-radius:4px}
 .sb-btn{display:flex;align-items:center;gap:10px;padding:10px 12px;border:none;background:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:12.5px;font-weight:500;color:#5a5a7a;border-radius:10px;transition:all 0.15s;width:100%;text-align:left}
@@ -215,7 +220,7 @@ const CSS = `
     inset: 0;
     z-index: 3000;
     background: rgba(0, 0, 0, 0.38);
-    backdrop-filter: blur(2px);
+    
   }
 
   body {
@@ -560,87 +565,127 @@ useEffect(() => {
       <style>{CSS}</style>
       {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
       {modal && <ModalRouter modal={modal} closeModal={() => setModal(null)} {...sharedProps} />}
-      <div className="app-shell" style={{ display: isMobile ? "block" : "flex", minHeight: "100vh", width: "100%" }}>
+      <div
+        className="pce-app-shell"
+        style={{
+          display: isMobile ? "block" : "flex",
+          minHeight: "100vh",
+          width: "100%",
+          position: "relative",
+          overflowX: "hidden",
+        }}
+      >
         <button
-          className="mobile-menu-button"
-          onClick={() => setMobileMenuOpen(true)}
-          aria-label="Open menu"
+          type="button"
+          className="pce-mobile-menu-toggle"
+          onClick={() => setMobileMenuOpen((open) => !open)}
+          aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
           style={{
             display: isMobile ? "flex" : "none",
             position: "fixed",
             top: "14px",
             left: "14px",
-            zIndex: 99999,
+            zIndex: 999999,
             width: "46px",
             height: "46px",
             border: "none",
             borderRadius: "14px",
             background: "#1a1a2e",
             color: "#ffffff",
-            fontSize: "24px",
-            fontWeight: 800,
+            fontSize: "26px",
+            fontWeight: 900,
             alignItems: "center",
             justifyContent: "center",
             boxShadow: "0 10px 28px rgba(0,0,0,0.25)",
             cursor: "pointer",
+            lineHeight: 1,
           }}
         >
-          ☰
+          {mobileMenuOpen ? "×" : "☰"}
         </button>
 
         {isMobile && mobileMenuOpen && (
           <div
-            className="mobile-sidebar-backdrop"
-            onClick={() => setMobileMenuOpen(false)}
+            className="pce-mobile-menu-panel"
             style={{
               position: "fixed",
-              inset: 0,
-              zIndex: 90000,
-              background: "rgba(0,0,0,0.38)",
-              backdropFilter: "blur(2px)",
+              top: "70px",
+              left: "14px",
+              right: "14px",
+              zIndex: 999998,
+              background: "#faf8f4",
+              border: "1px solid #e4dfd8",
+              borderRadius: "18px",
+              padding: "14px",
+              maxHeight: "calc(100vh - 92px)",
+              overflowY: "auto",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.26)",
+              filter: "none",
+              WebkitFilter: "none",
+              backdropFilter: "none",
             }}
-          />
+          >
+            <div style={{ padding: "4px 6px 14px", borderBottom: "1px solid #e4dfd8", marginBottom: 12 }}>
+              <div style={{ fontFamily: "Playfair Display", fontWeight: 900, fontSize: 16, color: "#1a1a2e" }}>PEARL COURT</div>
+              <div style={{ fontSize: 10, color: "#9090b0", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>Estate Management</div>
+              <div style={{ fontSize: 11, color: "#2e7d52", marginTop: 7, fontWeight: 700 }}>{cloudStatus}</div>
+            </div>
+
+            <div style={{ background: ROLE_COLORS[role], borderRadius: 12, padding: "11px 13px", marginBottom: 12 }}>
+              <div style={{ fontSize: 10, color: "#ffffff99", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8 }}>{ROLE_LABELS[role]}</div>
+              <div style={{ fontSize: 13, color: "#fff", fontWeight: 700, marginTop: 2 }}>{currentUser.name}</div>
+              {currentUser.apt && <div style={{ fontSize: 11, color: "#ffffff88" }}>{currentUser.apt}</div>}
+            </div>
+
+            {visibleTabs.map((t) => (
+              <button
+                key={`mobile-${t.id}-${t.label}`}
+                className={`sb-btn ${tab === t.id ? "active" : ""}`}
+                onClick={() => {
+                  setTab(t.id);
+                  setMobileMenuOpen(false);
+                }}
+                style={{ marginBottom: 6 }}
+              >
+                <span style={{ fontSize: 15 }}>{t.icon}</span>
+                <span style={{ flex: 1 }}>{t.label}</span>
+                {t.id === "email" && unreadEmails > 0 && <span className="number-tag">{unreadEmails}</span>}
+              </button>
+            ))}
+
+            <div style={{ display: "flex", gap: 8, marginTop: 12, paddingTop: 12, borderTop: "1px solid #e4dfd8" }}>
+              <button
+                className="btn btn-sm btn-outline"
+                style={{ flex: 1, fontSize: 12 }}
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  setModal({ type: "change-password", data: {} });
+                }}
+              >
+                🔒 Pwd
+              </button>
+              <button className="btn btn-sm btn-red" style={{ flex: 1, fontSize: 12 }} onClick={handleLogout}>
+                Logout
+              </button>
+            </div>
+          </div>
         )}
         {/* Sidebar */}
         <div
-          className={`app-sidebar ${mobileMenuOpen ? "open" : ""}`}
-          style={
-            isMobile
-              ? {
-                  width: "min(82vw, 320px)",
-                  maxWidth: "320px",
-                  background: "#faf8f4",
-                  borderRight: "1px solid #e4dfd8",
-                  display: "flex",
-                  flexDirection: "column",
-                  padding: "18px 10px",
-                  position: "fixed",
-                  top: 0,
-                  left: 0,
-                  bottom: 0,
-                  height: "100vh",
-                  overflowY: "auto",
-                  overflowX: "hidden",
-                  flexShrink: 0,
-                  zIndex: 95000,
-                  transform: mobileMenuOpen ? "translateX(0)" : "translateX(-110%)",
-                  transition: "transform 0.25s ease",
-                  boxShadow: "18px 0 40px rgba(0,0,0,0.25)",
-                }
-              : {
-                  width: 218,
-                  background: "#faf8f4",
-                  borderRight: "1px solid #e4dfd8",
-                  display: "flex",
-                  flexDirection: "column",
-                  padding: "18px 10px",
-                  position: "sticky",
-                  top: 0,
-                  height: "100vh",
-                  overflowY: "auto",
-                  flexShrink: 0,
-                }
-          }
+          className="pce-desktop-sidebar"
+          style={{
+            width: 218,
+            background: "#faf8f4",
+            borderRight: "1px solid #e4dfd8",
+            display: isMobile ? "none" : "flex",
+            flexDirection: "column",
+            padding: "18px 10px",
+            position: "sticky",
+            top: 0,
+            height: "100vh",
+            overflowY: "auto",
+            flexShrink: 0,
+          }}
         >
           <div style={{ padding: "0 6px 16px", borderBottom: "1px solid #e4dfd8", marginBottom: 12 }}>
             <div style={{ fontFamily: "Playfair Display", fontWeight: 900, fontSize: 15, color: "#1a1a2e" }}>PEARL COURT</div>
@@ -660,7 +705,7 @@ useEffect(() => {
           )}
           {visibleTabs.map(t => (
             <button
-              key={t.id}
+              key={`${t.id}-${t.label}`}
               className={`sb-btn ${tab === t.id ? "active" : ""}`}
               onClick={() => {
                 setTab(t.id);
@@ -683,10 +728,10 @@ useEffect(() => {
         </div>
         {/* Main */}
         <div
-          className="app-main"
+          className="pce-app-main"
           style={{
             flex: 1,
-            padding: isMobile ? "72px 14px 18px" : "22px",
+            padding: isMobile ? "76px 14px 18px" : "22px",
             overflowY: "auto",
             overflowX: "hidden",
             width: "100%",
